@@ -2,6 +2,8 @@
 /*global images, translations, markdown */
 'use strict';
 
+var USE_DIAPORAMA = !1;
+
 var totalImages = 0;
 var isDisplayingThumbnails = true;
 
@@ -141,12 +143,17 @@ var setupDiaporama = function (order) {
             playDiaporama();
         });
     };
+
+    
     $playpause = $('<img />', {
         width: 32,
         height: 32,
         id: 'playpause',
     }).tipsy({gravity: 'e'}).appendTo($toolbar);
     pauseDiaporama();
+
+    if (!USE_DIAPORAMA)
+        $playpause.css("display", "none");
 
     var renderLegend = function (img) {
         if (img.md && img.md.pos) {
@@ -364,11 +371,50 @@ var updateThumbs = function (newJson) {
     $('#thumbs').append(ul);
 };
 
+var makeTopBar = function () {
+    return;
+    setTimeout(function () {
+        $("#topbar").animate({ top: "-30px" });
+
+        $("#topbar").hover(function () {
+            $("#topbar").stop().animate({ top: 0 });
+        }, function () {
+            setTimeout(function () {
+                $("#topbar").stop().animate({ top: "-30px" });
+            }, 1000);
+        });     
+    }, 1500);
+}
+
+var makeLogout = function () {
+    $("#logout").click(function () {
+        $("body").html("<h1>Successfully logged out!</h1>");
+
+        $.get(window.location.protocol + "//log:out@" + window.location.host, function () { console.log("OK") });
+    })
+}
+
+var makeUpload = function () {
+    $("#upload").click(function() {
+        $.get("/uploadForm", function (data) {
+            $(function(){
+                //$("#modal-bg, #modal-close").click(function() {
+                    $("#modal-wnd, #modal-bg").addClass("active");
+                //});
+            });
+        })
+
+    })
+}
+
 $(document).ready(function() {
     title = $('title').text();
 
     $("#loading").remove();
     totalImages = images.length;
+    makeTopBar();
+    makeLogout();
+    makeUpload();
 
     if (window.location.hash) {
         var hash = parseInt(window.location.hash.substr(1), 10);

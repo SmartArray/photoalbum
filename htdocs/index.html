@@ -18,6 +18,26 @@
     <img class="thumb" id="loading" src="loading.gif" alt="loading…" >
     <div id="diaporama">
     </div>
+
+    <div id="topbar">
+        <label>%%NAME%%</label>
+        <a href="#logout" id="logout" class="btn">Logout</a>
+        <a href="#upload" id="upload" class="btn">Upload</a>
+    </div>
+
+    <div id="modal-bg"></div>
+    <div id="modal-wnd">
+        <button id="modal-close">x</button>
+
+        <form method="POST" action="upload">
+            Select images: <input type="file" multiple>
+            <br/>
+            <input type="submit" value="Upload">
+        </form>
+    </div>​
+
+
+
     <script type="text/javascript" src="images.json"></script>
     <script type="text/javascript" src="jquery.min.js"></script>
     <script type="text/javascript" src="jquery.viewport.js"></script>

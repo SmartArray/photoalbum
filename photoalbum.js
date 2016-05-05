@@ -2,6 +2,7 @@
 
 /* {{{ Globals */
 
+var express = require('express');
 var util = require('util');
 var os = require('os');
 var fs = require('fs');
@@ -9,9 +10,14 @@ var path = require('path');
 var im = require('imagemagick');
 var crypto = require('crypto');
 var mime = require('mime');
-var http = require('http');
 var url = require('url');
 var Q = require('q');
+var auth = require('http-auth');
+var bodyParser = require('body-parser');
+var favicon = require('express-favicon');
+var methodOverride = require('method-override');
+
+var app = express();
 
 //var throttle = require('throttle');
 var throttle = false;
@@ -80,7 +86,7 @@ var directories = [
 /* }}} */
 /* {{{ Utils */
 
-var keys = function (o) {
+var keys = function(o) {
     if (typeof this !== 'object') {
         throw new TypeError('Object.keys called on non-object');
     }
@@ -94,7 +100,7 @@ var keys = function (o) {
     return ret;
 };
 
-var md5 = function (path, onDone) {
+var md5 = function(path, onDone) {
     var md5sum = crypto.createHash('md5');
     var s = fs.ReadStream(path);
     s.on('data', function(d) {
@@ -107,8 +113,8 @@ var md5 = function (path, onDone) {
     });
 };
 
-var getJSONFromPath = function (path, onDone) {
-    var data = fs.readFile(path, function (err, data) {
+var getJSONFromPath = function(path, onDone) {
+    var data = fs.readFile(path, function(err, data) {
         if (err) {
             throw (err);
         }
@@ -117,7 +123,7 @@ var getJSONFromPath = function (path, onDone) {
     });
 };
 
-var saveCfg = function (cfgPath, cfg) {
+var saveCfg = function(cfgPath, cfg) {
     fs.writeFile(cfgPath, JSON.stringify(cfg, null, 4), function(err) {
         if (err) {
             throw (err);
@@ -125,7 +131,7 @@ var saveCfg = function (cfgPath, cfg) {
     });
 };
 
-var genLegend = function (legend) {
+var genLegend = function(legend) {
     if (legend) {
         if (typeof legend === "string") {
             return legend;
@@ -136,24 +142,27 @@ var genLegend = function (legend) {
     return undefined;
 };
 
-var genHtmlFile = function (cfg, source, onDone) {
-    fs.readFile(source, {encoding: 'UTF-8'}, function (err, data) {
+var genHtmlFile = function(username, cfg, source, onDone) {
+    fs.readFile(source, {
+        encoding: 'UTF-8'
+    }, function(err, data) {
         if (err) {
             throw err;
         }
+        if (username !== '') data = data.replace(/%%NAME%%/g, username);
         data = data.replace(/%%TITLE%%/g, cfg.title || '');
         data = data.replace(/%%LANG%%/g, cfg.lang || 'en');
-        getJSONFromPath('translations.json', function (translations) {
+        getJSONFromPath('translations.json', function(translations) {
             data = data.replace(/%%TRANSLATIONS%%/g,
-                                JSON.stringify(translations[cfg.lang] || {},
-                                               null, 1));
+                JSON.stringify(translations[cfg.lang] || {},
+                    null, 1));
             var langs = ["en"].concat(keys(translations));
             data = data.replace(/%%AVAILABLE_LANGS%%/g,
-                                JSON.stringify(langs, null, 1));
+                JSON.stringify(langs, null, 1));
             data = data.replace(/%%CFG%%/g,
-                                JSON.stringify(cfg, null, 1));
+                JSON.stringify(cfg, null, 1));
 
-            var _ = function (str) {
+            var _ = function(str) {
                 return translations[str] || str;
             };
             data = data.replace(/%%GENERATE_CFG%%/g, _('Generate config.json'));
@@ -170,11 +179,11 @@ var genHtmlFile = function (cfg, source, onDone) {
 /* }}} */
 /* {{{ Setup */
 
-var setup = function (cfg, isEditor) {
+var setup = function(cfg, isEditor) {
 
-    var workHtmlFile = function (filename) {
+    var workHtmlFile = function(filename) {
         var source = path.join('htdocs', filename);
-        genHtmlFile(cfg, source, function (data) {
+        genHtmlFile('', cfg, source, function(data) {
             var dest = path.join(cfg.out, filename);
             fs.writeFile(dest, data, function(err) {
                 if (err) {
@@ -185,7 +194,7 @@ var setup = function (cfg, isEditor) {
     };
 
 
-    var copyFilesList = function (l) {
+    var copyFilesList = function(l) {
         var i;
         for (i in l) {
             var filename = l[i];
@@ -212,10 +221,10 @@ var setup = function (cfg, isEditor) {
     /* mkdir */
     var i;
     for (i in directories) {
-        (function () {
+        (function() {
             var dir = directories[i];
             var p = path.join(cfg.out, dir);
-            fs.stat(p, function (err) {
+            fs.stat(p, function(err) {
                 if (err) {
                     fs.mkdir(p);
                 }
@@ -227,10 +236,10 @@ var setup = function (cfg, isEditor) {
 /* }}} */
 /* {{{ genJSON */
 
-var genJSON = function (cfg, images, onDone) {
+var genJSON = function(cfg, images, onDone) {
     var l = [];
     var i;
-    var errFn = function (err) {
+    var errFn = function(err) {
         if (err) {
             throw (err);
         }
@@ -245,8 +254,8 @@ var genJSON = function (cfg, images, onDone) {
         }
         var jsonPath = path.join(cfg.out, 'images.json');
         fs.writeFile(jsonPath, 'var images = ' +
-                     JSON.stringify(o.images, null, 4) + ';',
-                     errFn);
+            JSON.stringify(o.images, null, 4) + ';',
+            errFn);
     }
     if (onDone) {
         onDone();
@@ -256,13 +265,13 @@ var genJSON = function (cfg, images, onDone) {
 /* }}} */
 /* {{{ genThumbs */
 
-var genOneThumbnail = function (cfg, pos, img, images, onDone) {
+var genOneThumbnail = function(cfg, pos, img, images, onDone) {
     if (img.type === 'page') {
         images[pos] = img;
         onDone();
         return;
     }
-    fs.stat(img.path, function (err, stat) {
+    fs.stat(img.path, function(err, stat) {
         if (err) {
             console.error(err);
             onDone();
@@ -270,7 +279,7 @@ var genOneThumbnail = function (cfg, pos, img, images, onDone) {
         }
 
         var thumbPath = path.join(cfg.out, 'thumb', img.md5 + '.jpg');
-        var resize = function () {
+        var resize = function() {
             var o = {
                 width: 256,
                 srcPath: img.path,
@@ -304,48 +313,48 @@ var genOneThumbnail = function (cfg, pos, img, images, onDone) {
             });
         };
         fs.exists(path.join(cfg.out, 'thumb', img.md5 + '.jpg'),
-                  function (exists) {
-            if (exists) {
-                if (!img.th_w || !img.th_h) {
-                    im.identify(thumbPath, function(err, features) {
-                        if (err) {
-                            throw err;
-                        }
+            function(exists) {
+                if (exists) {
+                    if (!img.th_w || !img.th_h) {
+                        im.identify(thumbPath, function(err, features) {
+                            if (err) {
+                                throw err;
+                            }
 
-                        img.th_w = features.width;
-                        img.th_h = features.height;
-                    });
+                            img.th_w = features.width;
+                            img.th_h = features.height;
+                        });
+                    }
+                    var o = {
+                        l: genLegend(img.legend),
+                        md: genMetadata(img),
+                        md5: img.md5,
+                        l_w: img.l_w,
+                        l_h: img.l_h,
+                        th_w: img.th_w,
+                        th_h: img.th_h
+                    };
+                    images[pos] = o;
+                    onDone();
+                } else {
+                    resize();
                 }
-                var o = {
-                    l: genLegend(img.legend),
-                    md: genMetadata(img),
-                    md5: img.md5,
-                    l_w: img.l_w,
-                    l_h: img.l_h,
-                    th_w: img.th_w,
-                    th_h: img.th_h
-                };
-                images[pos] = o;
-                onDone();
-            } else {
-                resize();
-            }
-        });
+            });
     });
 };
 
-var genThumbs = function (cfg, onEnd) {
+var genThumbs = function(cfg, onEnd) {
     var i;
     var done = 0;
     var images = [];
 
-    var dealImage = function (cfg, pos, onDone) {
+    var dealImage = function(cfg, pos, onDone) {
         var img = cfg.images[pos];
         if (!img) {
             return;
         }
 
-        var finish = function () {
+        var finish = function() {
             done++;
             console.log('\rgenerating thumbnails: ' + done + '/' + cfg.images.length);
 
@@ -367,8 +376,8 @@ var genThumbs = function (cfg, onEnd) {
 /* }}} */
 /* {{{ copyFull */
 
-var copyIfNotExits = function (src, dst, onDone) {
-    fs.exists(dst, function (exists) {
+var copyIfNotExits = function(src, dst, onDone) {
+    fs.exists(dst, function(exists) {
         if (exists) {
             if (onDone) {
                 onDone();
@@ -386,16 +395,16 @@ var copyIfNotExits = function (src, dst, onDone) {
     });
 };
 
-var copyFull = function (cfg, onDone) {
+var copyFull = function(cfg, onDone) {
     var done = 0;
     var worker;
 
-    worker = function (pos) {
+    worker = function(pos) {
         var img = cfg.images[pos];
         if (!img) {
             return;
         }
-        var finish = function (pos) {
+        var finish = function(pos) {
             done++;
             console.log('\rcopying full images: ' + done + '/' + cfg.images.length);
             if (pos + NB_WORKERS < cfg.images.length) {
@@ -409,10 +418,10 @@ var copyFull = function (cfg, onDone) {
             finish(pos);
         } else {
             copyIfNotExits(img.path,
-                           path.join(cfg.out, 'full', img.md5 + '.jpg'),
-                           function() {
-                               finish(pos);
-                           });
+                path.join(cfg.out, 'full', img.md5 + '.jpg'),
+                function() {
+                    finish(pos);
+                });
         }
     };
 
@@ -425,7 +434,7 @@ var copyFull = function (cfg, onDone) {
 /* }}} */
 /* {{{ processMetadata */
 
-var processGPS = function (exif) {
+var processGPS = function(exif) {
     var pos = {};
     if (!exif.gpsVersionID) {
         return undefined;
@@ -433,12 +442,12 @@ var processGPS = function (exif) {
     if (exif.gpsVersionID === '2, 3, 0, 0' || exif.gpsVersionID === '2.3.0.0') {
         if (!exif.gpsLatitude || !exif.gpsLatitudeRef ||
             !exif.gpsLongitude || !exif.gpsLongitudeRef) {
-                return undefined;
+            return undefined;
         }
         var t;
         t = exif.gpsLatitude.split(', ');
 
-        var conv = function (str) {
+        var conv = function(str) {
             var t = str.split('/');
             if (t.length == 2) {
                 return parseInt(t[0]) / parseInt(t[1]);
@@ -447,12 +456,12 @@ var processGPS = function (exif) {
             }
         };
         var degree;
-        var lat = conv(t[0]) + conv(t[1])/60 + conv(t[2])/3600;
+        var lat = conv(t[0]) + conv(t[1]) / 60 + conv(t[2]) / 3600;
         if (exif.gpsLatitudeRef == 'S') {
             lat = -lat;
         }
         t = exif.gpsLongitude.split(',');
-        var lon = conv(t[0]) + conv(t[1])/60 + conv(t[2])/3600;
+        var lon = conv(t[0]) + conv(t[1]) / 60 + conv(t[2]) / 3600;
         if (exif.gpsLongitudeRef == 'W') {
             lon = -lon;
         }
@@ -464,7 +473,7 @@ var processGPS = function (exif) {
     return pos;
 };
 
-var processMetadata = function (metadata) {
+var processMetadata = function(metadata) {
     var md = {};
 
     if (!metadata || !metadata.exif)
@@ -492,7 +501,7 @@ var processMetadata = function (metadata) {
     return md;
 };
 
-var genMetadata = function (img) {
+var genMetadata = function(img) {
     var md = {};
 
     if (!img.metadata) {
@@ -516,18 +525,18 @@ var genMetadata = function (img) {
 /* }}} */
 /* {{{ doRender */
 
-var doRender = function (cfg, doGenJSON, onDone) {
+var doRender = function(cfg, doGenJSON, onDone) {
     var i;
     var done = 0;
     var images = [];
 
-    var dealImage = function (cfg, pos, onDone) {
+    var dealImage = function(cfg, pos, onDone) {
         var img = cfg.images[pos];
         if (!img) {
             return;
         }
 
-        var finish = function () {
+        var finish = function() {
             done++;
             console.log('\rworking on images: ' + done + '/' + cfg.images.length);
             if (pos + NB_WORKERS < cfg.images.length) {
@@ -544,14 +553,14 @@ var doRender = function (cfg, doGenJSON, onDone) {
             return;
         }
 
-        var full = function () {
-            var dest = path.join(cfg.out, 'full',  img.md5 + '.jpg');
+        var full = function() {
+            var dest = path.join(cfg.out, 'full', img.md5 + '.jpg');
 
             copyIfNotExits(img.path, dest, finish);
         };
 
-        var large = function () {
-            var action = function () {
+        var large = function() {
+            var action = function() {
                 var o = {
                     srcPath: img.path,
                     dstPath: path.join(cfg.out, 'large', img.md5 + '.jpg'),
@@ -569,7 +578,7 @@ var doRender = function (cfg, doGenJSON, onDone) {
                 o.height = img.height / d;
                 o.width = img.width / d;
 
-                fs.exists(o.dstPath, function (exists) {
+                fs.exists(o.dstPath, function(exists) {
                     if (exists) {
                         full();
                     } else {
@@ -614,7 +623,7 @@ var doRender = function (cfg, doGenJSON, onDone) {
     };
 
 
-    var itsOver = function () {
+    var itsOver = function() {
         if (doGenJSON) {
             genJSON(cfg, images);
         }
@@ -628,7 +637,7 @@ var doRender = function (cfg, doGenJSON, onDone) {
 /* }}} */
 /* {{{ addImages */
 
-var addImages = function (cfg, cfgPath, images, inPath) {
+var addImages = function(cfg, cfgPath, images, inPath) {
 
     var deferred = Q.defer();
 
@@ -647,7 +656,7 @@ var addImages = function (cfg, cfgPath, images, inPath) {
             return;
         }
 
-        var onDone = function () {
+        var onDone = function() {
             done++;
             console.log('\ranalysing files: ' + done + '/' + images.length);
 
@@ -678,13 +687,13 @@ var addImages = function (cfg, cfgPath, images, inPath) {
             return;
         }
 
-        fs.stat(p, function (err, stat) {
+        fs.stat(p, function(err, stat) {
             if (err) {
                 console.error(err);
                 onDone();
                 return;
             }
-            im.readMetadata(p, function (err, metadata) {
+            im.readMetadata(p, function(err, metadata) {
                 if (err) {
                     console.error(err);
                     onDone();
@@ -724,7 +733,7 @@ var genConfig = function(inPath, cfgPath, outDirectory) {
         lang: 'en'
     };
 
-    fs.readdir(inPath, function (err, dirs) {
+    fs.readdir(inPath, function(err, dirs) {
         if (err) {
             throw err;
         }
@@ -732,13 +741,13 @@ var genConfig = function(inPath, cfgPath, outDirectory) {
 
         addImages(json, cfgPath, dirs, inPath)
             .then(function() {
-                fs.stat(json.out, function (err, stats) {
+                fs.stat(json.out, function(err, stats) {
                     console.log("Output dir is set to " + json.out + "\n");
                     if (err) {
                         fs.mkdir(json.out);
                     }
                     console.log("you can now run '" + process.argv[1] + " editor " +
-                                cfgPath + "' to generate an editor\n");
+                        cfgPath + "' to generate an editor\n");
                 });
             });
     });
@@ -747,7 +756,7 @@ var genConfig = function(inPath, cfgPath, outDirectory) {
 /* }}} */
 /* {{{ cleanup */
 
-var cleanup = function (cfg) {
+var cleanup = function(cfg) {
     var images = {};
     var i;
     for (i in cfg.images) {
@@ -757,27 +766,27 @@ var cleanup = function (cfg) {
         }
     }
 
-    var cleanupDir = function (allowedFiles, dir) {
+    var cleanupDir = function(allowedFiles, dir) {
         var dirPath = (dir) ? path.join(cfg.out, dir) : cfg.out;
-        fs.readdir(dirPath, function (err, files) {
+        fs.readdir(dirPath, function(err, files) {
             if (err) {
                 throw err;
             }
             var i;
             for (i in files) {
-                (function(){
+                (function() {
                     var filename = files[i];
                     if (!allowedFiles[filename]) {
                         var f = path.join(dirPath, filename);
-                        fs.stat(f, function (err, stats) {
+                        fs.stat(f, function(err, stats) {
                             if (err) {
                                 throw err;
                             }
                             if (stats.isDirectory()) {
-                                console.err(f + ' is a directory that should'
-                                            + ' be cleaned up');
+                                console.err(f + ' is a directory that should' +
+                                    ' be cleaned up');
                             } else {
-                                fs.unlink(f, function (err) {
+                                fs.unlink(f, function(err) {
                                     if (err) {
                                         throw err;
                                     }
@@ -795,13 +804,13 @@ var cleanup = function (cfg) {
     cleanupDir(images, 'thumb');
 
 
-    fs.readdir('htdocs', function (err, files) {
+    fs.readdir('htdocs', function(err, files) {
         if (err) {
             throw err;
         }
         var i;
         var allowedFiles = {};
-        var setupAllowedFiles = function (l) {
+        var setupAllowedFiles = function(l) {
             for (i in l) {
                 var filename = l[i];
                 allowedFiles[filename] = true;
@@ -818,20 +827,22 @@ var cleanup = function (cfg) {
 /* }}} */
 /* {{{ server */
 
-var server = function (cfg, cfgPath) {
+var server = function(cfg, cfgPath) {
     var httpSimple = function(code, response) {
-        response.writeHead(code, {'Content-Type': 'text/html'});
+        response.writeHead(code, {
+            'Content-Type': 'text/html'
+        });
         response.end('<h1>' + http.STATUS_CODES[code] + '</h1>');
     };
 
-    var serveStaticFile = function (filePath, response) {
+    var serveStaticFile = function(filePath, response) {
 
-        fs.stat(filePath, function (err, stat) {
+        fs.stat(filePath, function(err, stat) {
             if (err) {
                 httpSimple(404, response);
                 return;
             }
-            console.log("serving " + filePath);
+            //console.log("serving " + filePath);
 
             var type = mime.lookup(filePath);
             response.writeHead(200, {
@@ -848,32 +859,64 @@ var server = function (cfg, cfgPath) {
         });
     };
 
-    var handler = function (request, response) {
+    var handler = function(request, response) {
         var urlParts;
         if (request.method === 'GET') {
             urlParts = url.parse(request.url, false);
             switch (urlParts.pathname) {
-              case '/editor.html':
-                /* regenerate editor.html on the fly */
-                var source = 'htdocs/editor.html';
-                genHtmlFile(cfg, source, function (data) {
-                    var buf = Buffer(data);
-                    response.writeHead(200, {
-                        'Content-Type': 'text/html',
-                        'Content-Length': buf.length
+                case '/editor.html':
+                    /* regenerate editor.html on the fly */
+                    var source = 'htdocs/editor.html';
+                    genHtmlFile(request.user, cfg, source, function(data) {
+                        var buf = Buffer(data);
+                        response.writeHead(200, {
+                            'Content-Type': 'text/html',
+                            'Content-Length': buf.length
+                        });
+                        response.end(buf);
                     });
-                    response.end(buf);
-                });
-                break;
-              case '/cfg.json':
-                serveStaticFile(cfgPath, response);
-                break;
-              case '/':
-                serveStaticFile(path.join(cfg.out, '/index.html'), response);
-                break;
-              default:
-                serveStaticFile(path.join(cfg.out, urlParts.pathname), response);
-                break;
+                    break;
+
+                case '/cfg.json':
+                    serveStaticFile(cfgPath, response);
+                    break;
+
+                case '/index.html':
+                case '/':
+                    var source = 'htdocs/index.html';
+                    genHtmlFile(request.user, cfg, source, function(data) {
+                        var buf = Buffer(data);
+                        response.writeHead(200, {
+                            'Content-Type': 'text/html',
+                            'Content-Length': buf.length
+                        });
+                        response.end(buf);
+                    });                    
+                    break;
+
+                case '/uploadForm':
+
+                    response.writeHead(200, {
+                        'Content-Type': 'text/html'
+                    });
+
+                    response.end("OK");
+                    break;
+
+                case '/logout':
+                    //delete request.user;
+                    response.statusCode = 401; // Force them to retry authentication
+                    response.setHeader('WWW-Authenticate', 'Basic realm="Protected Gallery"');
+
+                    //response.statusCode = 403;   // or alternatively just reject them altogether with a 403 Forbidden
+
+                    response.end('<html><body>Successfully logged out!</body></html>');
+                    // http authorisation: basic [base64 ...]
+                    break;
+
+                default:
+                    serveStaticFile(path.join(cfg.out, urlParts.pathname), response);
+                    break;
             }
         } else if (request.method === 'POST') {
             urlParts = url.parse(request.url, false);
@@ -882,10 +925,10 @@ var server = function (cfg, cfgPath) {
                 return;
             }
             var data = "";
-            request.on('data', function (chunk) {
+            request.on('data', function(chunk) {
                 data += chunk;
             });
-            request.on('end', function () {
+            request.on('end', function() {
                 httpSimple(200, response);
                 fs.writeFile(cfgPath, data, function(err) {
                     if (err) {
@@ -897,32 +940,71 @@ var server = function (cfg, cfgPath) {
             httpSimple(501, response);
         }
     };
-    http.createServer(handler).listen(DEFAULT_HTTP_PORT);
 
-    console.log('Server running at http://localhost:' + DEFAULT_HTTP_PORT + '/'
-                + '\neditor available at http://localhost:' + DEFAULT_HTTP_PORT
-                + '/editor.html');
+    //console.log( __dirname + "/users.htdigest");
+    
+    var http_authentification = auth.digest({
+            realm: "Protected Gallery",
+            //algorithm: 'MD5-sess',
+            file: __dirname + "/users.htdigest"
+
+        } /*, function (username, callback) {
+            console.log(username);
+            var json = getJSONFromPath("login.json", function (d) {
+                var str;
+                for (var a in d.logins) {
+                    if (username == d.logins[a].username) {
+                        str = d.logins[a].password
+                        return callback(str)
+                    }
+                }
+
+                return callback();
+            });
+        }
+        */
+    );
+
+    //http.createServer(http_authentification, handler).listen(DEFAULT_HTTP_PORT);
+
+    app.set('port', DEFAULT_HTTP_PORT);
+    app.use(favicon(__dirname + "/favicon.ico"));
+    app.use(auth.connect(http_authentification));
+    app.use(bodyParser.json({
+        keepExtensions: true,
+        uploadDir: __dirname + "/img",
+        limit: '20mb'
+    }));
+    app.use(methodOverride());
+
+    app.get('*', handler);
+
+    app.listen(app.get('port'), function () {
+        console.log('Server running at http://localhost:' + app.get('port') + '/' +
+            '\neditor available at http://localhost:' + app.get('port') +
+            '/editor.html');
+    });
 };
 
 /* }}} */
 /* {{{ main */
 
 var usage = function() {
-    console.log("usage: photoalbum command\n\n"
-    + "command is one of the following:\n"
-    + "config input_directory output_config_file [output_directory]\n"
-    + "    generate a configuration files about files in input_directory\n"
-    + "editor config_file\n"
-    + "    generate an editor.html file in output directory\n"
-    + "server config_file\n"
-    + "    launch an http server to use the editor and the resulting"
-    +    " photoalbum\n"
-    + "add config_file [images...]\n"
-    + "    add the given images to the configuration file\n"
-    + "cleanup config_file\n"
-    + "    remove unused files in the output directory. Use with caution.\n"
-    + "render config_file\n"
-    + "    render the photoalbum\n");
+    console.log("usage: photoalbum command\n\n" +
+        "command is one of the following:\n" +
+        "config input_directory output_config_file [output_directory]\n" +
+        "    generate a configuration files about files in input_directory\n" +
+        "editor config_file\n" +
+        "    generate an editor.html file in output directory\n" +
+        "server config_file\n" +
+        "    launch an http server to use the editor and the resulting" +
+        " photoalbum\n" +
+        "add config_file [images...]\n" +
+        "    add the given images to the configuration file\n" +
+        "cleanup config_file\n" +
+        "    remove unused files in the output directory. Use with caution.\n" +
+        "render config_file\n" +
+        "    render the photoalbum\n");
     process.exit(1);
 };
 
@@ -933,52 +1015,58 @@ if (args.length < 2) {
 
 
 switch (args[0]) {
-  case "config":
-    if (args.length < 3) {
-        usage();
-    }
-    genConfig(args[1], args[2], args[3]);
-    break;
-  case "editor":
-    getJSONFromPath(args[1], function (cfg) {
-        setup(cfg, false);
-        var onDone = function () {
-            setup(cfg, true);
-            copyFull(cfg, function() {
-                saveCfg(args[1], cfg);
-                console.log("you can now run '" + process.argv[1] + " server " +
-                           args[1] + "' to start a server to edit the album\n");
-            });
-        };
-        genThumbs(cfg, onDone);
-    });
-    break;
-  case "server":
-    getJSONFromPath(args[1], function (cfg) {
-        setup(cfg, false);
-        server(cfg, args[1]);
-    });
-    break;
-  case "add":
-    getJSONFromPath(args[1], function (cfg) {
-        addImages(cfg, args[1], args.slice(2));
-    });
-    break;
-  case "cleanup":
-    getJSONFromPath(args[1], function (cfg) {
-        cleanup(cfg);
-    });
-    break;
-  case "render":
-    getJSONFromPath(args[1], function (cfg) {
-        setup(cfg, false);
-        doRender(cfg, true, function () {
-            saveCfg(args[1], cfg);
+    case "config":
+        if (args.length < 3) {
+            usage();
+        }
+        genConfig(args[1], args[2], args[3]);
+        break;
+
+    case "editor":
+        getJSONFromPath(args[1], function(cfg) {
+            setup(cfg, false);
+            var onDone = function() {
+                setup(cfg, true);
+                copyFull(cfg, function() {
+                    saveCfg(args[1], cfg);
+                    console.log("you can now run '" + process.argv[1] + " server " +
+                        args[1] + "' to start a server to edit the album\n");
+                });
+            };
+            genThumbs(cfg, onDone);
         });
-    });
-    break;
-  default:
-    usage();
+        break;
+
+    case "server":
+        getJSONFromPath(args[1], function(cfg) {
+            //setup(cfg, false);
+            server(cfg, args[1]);
+        });
+        break;
+
+    case "add":
+        getJSONFromPath(args[1], function(cfg) {
+            addImages(cfg, args[1], args.slice(2));
+        });
+        break;
+
+    case "cleanup":
+        getJSONFromPath(args[1], function(cfg) {
+            cleanup(cfg);
+        });
+        break;
+
+    case "render":
+        getJSONFromPath(args[1], function(cfg) {
+            setup(cfg, false);
+            doRender(cfg, true, function() {
+                saveCfg(args[1], cfg);
+            });
+        });
+        break;
+
+    default:
+        usage();
 }
 
 /* }}} */
