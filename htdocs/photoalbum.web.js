@@ -238,10 +238,10 @@ var setupDiaporama = function (order) {
             };
         } else {
             var $fullLink = $('<a />', {
-                href: 'full/' + img.md5 + '.jpg'
+                href: 'full/' + img.md5 + img.ext
             }).appendTo($imgContainer);
             var $img = $('<img />', {
-                src: 'large/' + img.md5 + '.jpg',
+                src: 'large/' + img.md5 + img.ext,
                 id: 'main'
             }).appendTo($fullLink);
 
@@ -315,6 +315,7 @@ var renderThumbImg = function (img, $children, i) {
         $img.prop('width', img.th_w);
         $img.prop('height', img.th_h);
         $img.prop('alt', img.l);
+        $img.attr('ext', img.ext);
     } else {
         $li = $('<li />');
         $img = $('<img />', {
@@ -325,7 +326,7 @@ var renderThumbImg = function (img, $children, i) {
             alt: img.l
         }).click(function() {
             setupDiaporama(order);
-        });
+        }).attr('ext', img.ext);
         $img.appendTo($li);
     }
     return $li;
@@ -372,17 +373,8 @@ var updateThumbs = function (newJson) {
 };
 
 var makeTopBar = function () {
-    return;
     setTimeout(function () {
-        $("#topbar").animate({ top: "-30px" });
-
-        $("#topbar").hover(function () {
-            $("#topbar").stop().animate({ top: 0 });
-        }, function () {
-            setTimeout(function () {
-                $("#topbar").stop().animate({ top: "-30px" });
-            }, 1000);
-        });     
+        $("#topbar").removeClass("preview");
     }, 1500);
 }
 
@@ -394,27 +386,73 @@ var makeLogout = function () {
     })
 }
 
+var upload = function (files) {
+    return new Promise(function (resolve, reject) {
+        function upload_images(files) {
+            var formData = new FormData();
+            for (var a in files) { formData.append('image[]', files[a]); }
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('post', '/upload', true);
+
+            xhr.upload.onprogress = function(e) {
+                if (e.lengthComputable) {
+                    var percentage = (e.loaded / e.total) * 100;
+                    $("#upload_progress").attr("value", percentage);
+                }
+            };
+
+            xhr.onerror = function(e) {
+                console.log("error")
+                reject(Error('An error occurred while submitting the form. Maybe your file is too big'));
+            };
+
+            xhr.onload = function() {
+                console.log(this)
+                resolve(files.length);
+            };
+            xhr.send(formData);
+        }
+
+        upload_images(files);
+    });
+}
+
 var makeUpload = function () {
     $("#upload").click(function() {
         $.get("/uploadForm", function (data) {
-            $(function(){
-                //$("#modal-bg, #modal-close").click(function() {
-                    $("#modal-wnd, #modal-bg").addClass("active");
-                //});
-            });
+            $("#modal-wnd, #modal-bg").addClass("active");
         })
-
     })
+
+    $("#modal-bg, #modal-close").click(function() {
+        $("#modal-wnd, #modal-bg").removeClass("active");
+    })
+
+    $('input#upload_submit').on('click', function(evt) {
+        evt.preventDefault();
+        $("#upload_loading").removeClass("hidden");
+
+        var files = document.getElementById('files').files;
+        upload(files).then(function (val) {
+            $("#upload_loading").addClass("hidden");
+            alert(val + " files successfully uploaded!");
+            window.location.reload();
+        })
+    });
 }
 
 $(document).ready(function() {
     title = $('title').text();
 
     $("#loading").remove();
-    totalImages = images.length;
+    
     makeTopBar();
     makeLogout();
     makeUpload();
+
+    if (images == undefined) return;
+    totalImages = images.length;
 
     if (window.location.hash) {
         var hash = parseInt(window.location.hash.substr(1), 10);
@@ -460,7 +498,7 @@ $(document).ready(function() {
         }
         $('#thumbs li img:in-viewport').each(function() {
             var $t = $(this);
-            $t.prop('src', 'thumb/' + $t.prop('id') + '.jpg');
+            $t.prop('src', 'thumb/' + $t.prop('id') + $t.attr('ext'));
         });
     };
     $(window).scroll(onScroll);

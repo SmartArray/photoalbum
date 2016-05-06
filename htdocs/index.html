@@ -19,7 +19,7 @@
     <div id="diaporama">
     </div>
 
-    <div id="topbar">
+    <div id="topbar" class="preview">
         <label>%%NAME%%</label>
         <a href="#logout" id="logout" class="btn">Logout</a>
         <a href="#upload" id="upload" class="btn">Upload</a>
@@ -30,13 +30,14 @@
         <button id="modal-close">x</button>
 
         <form method="POST" action="upload">
-            Select images: <input type="file" multiple>
-            <br/>
-            <input type="submit" value="Upload">
+            <h2>Upload images</h2>
+            <input id="files" type="file" multiple>
+            <input id="upload_submit" type="submit" value="Upload">
+            <img class="hidden" id="upload_loading" src="loading.gif" alt="loading…" >
+            <br />
+            <progress id="upload_progress" value="0" max="100">0%</progress>
         </form>
     </div>​
-
-
 
     <script type="text/javascript" src="images.json"></script>
     <script type="text/javascript" src="jquery.min.js"></script>

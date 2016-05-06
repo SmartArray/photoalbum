@@ -160,7 +160,7 @@ a.position {
 
 #topbar {
     position: fixed;
-    top: -28px;
+    top: -26px;
     left: 0;
     width: 100%;
     height: 32px;
@@ -194,7 +194,15 @@ a.position {
     -moz-transition: top 0.4s ease-in-out;
     -webkit-transition: top 0.4s ease-in-out;
     top: 0;
+}
 
+#topbar.preview {
+    transition: top 0.2s ease-in-out;
+    -o-transition: top 0.2s ease-in-out;
+    -ms-transition: top 0.2s ease-in-out;
+    -moz-transition: top 0.2s ease-in-out;
+    -webkit-transition: top 0.2s ease-in-out;    
+    top: 0;
 }
 
 div.message {
@@ -237,7 +245,7 @@ div.message {
     -webkit-box-shadow: 0 0 20px 0 #222;
     -moz-box-shadow: 0 0 20px 0 #222;
     display: none;
-    height: 240px;
+    height: 180px;
     left: 50%;
     margin: -120px 0 0 -200px;
     padding: 10px;
@@ -245,6 +253,9 @@ div.message {
     top: 50%;
     width: 400px;
     z-index: 1000;
+
+    box-shadow: 0px 0px 20px #59D9FF;
+    filter:progid:DXImageTransform.Microsoft.Glow(Color=#59D9FF,Strength=20);
 }
 
 #modal-wnd form {
@@ -257,8 +268,20 @@ div.message {
     float: right;
 }
 
-
-
 #modal-bg.active, #modal-wnd.active {
     display: block;
-}​
+}
+
+progress#upload_progress {
+    width: 100%;
+    margin-top: 20px;
+}
+
+#upload_loading {
+    width: 16px;
+    display: inline;
+}
+
+#upload_loading.hidden {
+    display: none;
+}

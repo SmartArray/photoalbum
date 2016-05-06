@@ -2,26 +2,27 @@
 
 /* {{{ Globals */
 
-var express = require('express');
-var util = require('util');
-var os = require('os');
-var fs = require('fs');
-var path = require('path');
-var im = require('imagemagick');
-var crypto = require('crypto');
-var mime = require('mime');
-var url = require('url');
-var Q = require('q');
-var auth = require('http-auth');
-var bodyParser = require('body-parser');
-var favicon = require('express-favicon');
-var methodOverride = require('method-override');
+var express = require('express'),
+    util = require('util'),
+    os = require('os'),
+    fs = require('fs'),
+    path = require('path'),
+    im = require('imagemagick'),
+    crypto = require('crypto'),
+    mime = require('mime'),
+    url = require('url'),
+    Q = require('q'),
+    auth = require('http-auth'),
+    multipart = require('connect-multiparty'),
+    favicon = require('express-favicon'),
+    methodOverride = require('method-override'),
+    http = require('http');
 
 var app = express();
+var multipartMiddleware = multipart();
 
 //var throttle = require('throttle');
 var throttle = false;
-
 
 var DEFAULT_HTTP_PORT = 8080;
 var NB_WORKERS = 10;
@@ -124,10 +125,11 @@ var getJSONFromPath = function(path, onDone) {
 };
 
 var saveCfg = function(cfgPath, cfg) {
-    fs.writeFile(cfgPath, JSON.stringify(cfg, null, 4), function(err) {
-        if (err) {
-            throw (err);
-        }
+    return new Promise(function (fulfill, reject) {
+        fs.writeFile(cfgPath, JSON.stringify(cfg, null, 4), function(err) {
+            if (err) { return reject(err); }
+            return fulfill("OK")
+        });
     });
 };
 
@@ -221,6 +223,7 @@ var setup = function(cfg, isEditor) {
     /* mkdir */
     var i;
     for (i in directories) {
+        console.log(" (!): " +  directories[i]);
         (function() {
             var dir = directories[i];
             var p = path.join(cfg.out, dir);
@@ -278,7 +281,7 @@ var genOneThumbnail = function(cfg, pos, img, images, onDone) {
             return;
         }
 
-        var thumbPath = path.join(cfg.out, 'thumb', img.md5 + '.jpg');
+        var thumbPath = path.join(cfg.out, 'thumb', img.md5 + path.extname(img.path));
         var resize = function() {
             var o = {
                 width: 256,
@@ -305,14 +308,15 @@ var genOneThumbnail = function(cfg, pos, img, images, onDone) {
                         l_w: img.l_w,
                         l_h: img.l_h,
                         th_w: img.th_w,
-                        th_h: img.th_h
+                        th_h: img.th_h,
+                        ext: path.extname(img.path)
                     };
                     images[pos] = o;
-                    onDone();
+                    return onDone();
                 });
             });
         };
-        fs.exists(path.join(cfg.out, 'thumb', img.md5 + '.jpg'),
+        fs.exists(path.join(cfg.out, 'thumb', img.md5 + path.extname(img.path)),
             function(exists) {
                 if (exists) {
                     if (!img.th_w || !img.th_h) {
@@ -332,45 +336,41 @@ var genOneThumbnail = function(cfg, pos, img, images, onDone) {
                         l_w: img.l_w,
                         l_h: img.l_h,
                         th_w: img.th_w,
-                        th_h: img.th_h
+                        th_h: img.th_h,
+                        ext: path.extname(img.path)
                     };
                     images[pos] = o;
-                    onDone();
+                    return onDone();
                 } else {
-                    resize();
+                    return resize();
                 }
             });
     });
 };
 
 var genThumbs = function(cfg, onEnd) {
-    var i;
     var done = 0;
     var images = [];
 
-    var dealImage = function(cfg, pos, onDone) {
+    var dealImage = function(cfg, pos) {
         var img = cfg.images[pos];
-        if (!img) {
-            return;
-        }
+        if (!img) { console.log("Got no image: " + pos ); return; }
 
         var finish = function() {
             done++;
-            console.log('\rgenerating thumbnails: ' + done + '/' + cfg.images.length);
 
-            if (pos + NB_WORKERS < cfg.images.length) {
-                dealImage(cfg, pos + NB_WORKERS, onDone);
+            if (done < cfg.images.length) {
+                return dealImage(cfg, done);
             } else if (done == cfg.images.length) {
-                console.log('\n');
-                onDone(images);
+                console.log("ON end")
+                return onEnd(images);
             }
         };
+
         genOneThumbnail(cfg, pos, img, images, finish);
     };
 
-    for (i = 0; i < NB_WORKERS; i++) {
-        dealImage(cfg, i, onEnd);
-    }
+    dealImage(cfg, 0);
 };
 
 /* }}} */
@@ -417,8 +417,9 @@ var copyFull = function(cfg, onDone) {
         if (img.type === 'page') {
             finish(pos);
         } else {
+            console.log("> " + img.md5 + path.extname(img.path))
             copyIfNotExits(img.path,
-                path.join(cfg.out, 'full', img.md5 + '.jpg'),
+                path.join(cfg.out, 'full', img.md5 + path.extname(img.path)),
                 function() {
                     finish(pos);
                 });
@@ -554,7 +555,7 @@ var doRender = function(cfg, doGenJSON, onDone) {
         }
 
         var full = function() {
-            var dest = path.join(cfg.out, 'full', img.md5 + '.jpg');
+            var dest = path.join(cfg.out, 'full', img.md5 + path.extname(img.path));
 
             copyIfNotExits(img.path, dest, finish);
         };
@@ -563,7 +564,7 @@ var doRender = function(cfg, doGenJSON, onDone) {
             var action = function() {
                 var o = {
                     srcPath: img.path,
-                    dstPath: path.join(cfg.out, 'large', img.md5 + '.jpg'),
+                    dstPath: path.join(cfg.out, 'large', img.md5 + path.extname(img.path)),
                     height: 768,
                     strip: true,
                     progressive: true
@@ -634,93 +635,126 @@ var doRender = function(cfg, doGenJSON, onDone) {
     }
 };
 
+
+function dateToStr(date) {
+        var day = (date.getDate() < 10 ? "0" + date.getDate() : date.getDate());
+        var hours = (date.getHours() < 10 ? "0" + date.getHours() : "" + date.getHours());
+        var minutes = (date.getMinutes() < 10 ? "0" + date.getMinutes() : "" + date.getMinutes());
+        var seconds = (date.getSeconds() < 10 ? "0" + date.getSeconds() : "" + date.getSeconds());
+        return "" + date.getFullYear() + (date.getMonth() + 1) + day + "_" + hours + minutes + seconds;
+}
+
+function getDateTimeFilename(imagepath) {
+    return new Promise(function (resolve, reject) {
+        im.readMetadata(imagepath, function (err, metadata) {
+            var date, exif;
+            if (err) return reject(err);
+
+            exif = metadata.exif;
+            if (exif != undefined) {
+                date = (exif.dateTime || exif.dateTimeDigitized || exif.dateTimeOriginal);
+                return resolve(dateToStr(new Date(date)));
+            } else {
+                //md5 filename
+                fs.readFile(imagepath, function (err, data) {
+                    var checksum;
+                    if (err) { return reject(err); }
+                    checksum = crypto.createHash('md5').update(data).digest('hex');
+                    return resolve(checksum);
+                })
+            }
+        });
+    })
+}
+
 /* }}} */
 /* {{{ addImages */
 
 var addImages = function(cfg, cfgPath, images, inPath) {
 
-    var deferred = Q.defer();
+    return new Promise(function (fulfill, reject) {
 
-    var md5Dict = {};
-    var i;
-    for (i in cfg.images) {
-        var img = cfg.images[i];
-        md5Dict[img.md5] = true;
-    }
-    var original_length = cfg.images.length;
-
-    var done = 0;
-    var checkImage;
-    checkImage = function(f) {
-        if (f >= images.length) {
-            return;
+        var md5Dict = {};
+        var i;
+        for (i in cfg.images) {
+            var img = cfg.images[i];
+            md5Dict[img.md5] = true;
         }
+        var original_length = cfg.images.length;
 
-        var onDone = function() {
-            done++;
-            console.log('\ranalysing files: ' + done + '/' + images.length);
+        var done = 0;
+        var checkImage;
 
-            if (f + NB_WORKERS < images.length) {
-                checkImage(f + NB_WORKERS);
-            } else if (done == images.length) {
-                console.log('\nphoto album now has ' + cfg.images.length + ' images\n');
-                if (inPath) {
-                    cfg.images.sort(function(imgA, imgB) {
-                        if (imgA.path < imgB.path) {
-                            return -1;
-                        } else if (imgA.path > imgB.path) {
-                            return 1;
-                        } else {
-                            return 0;
-                        }
-                    });
+        checkImage = function(f) {
+            if (f >= images.length) { return; }
+
+            var onDone = function () {
+                ++done;
+                console.log('\ranalysing files: ' + done + '/' + images.length);
+
+                if (done == images.length) {
+                    console.log('photo album now has ' + cfg.images.length + ' images\n');
+
+                    if (inPath) {
+                        cfg.images.sort(function(imgA, imgB) {
+                            if (imgA.path < imgB.path) {
+                                return -1;
+                            } else if (imgA.path > imgB.path) {
+                                return 1;
+                            } else {
+                                return 0;
+                            }
+                        });
+                    }
+                    console.log("Fulfill!")
+                    return fulfill(done);
+                } else {
+                    console.log("calling " +  done)
+                    return checkImage(done);
                 }
-                saveCfg(cfgPath, cfg);
-                deferred.resolve();
-            }
-        };
+            };
 
-        var p = (inPath) ? path.join(inPath, images[f]) : images[f];
-        var type = mime.lookup(p);
-        if (type.indexOf('image') !== 0) {
-            onDone();
-            return;
-        }
-
-        fs.stat(p, function(err, stat) {
-            if (err) {
-                console.error(err);
+            var p = (inPath) ? path.join(inPath, images[f]) : images[f];
+            var type = mime.lookup(p);
+            if (type.indexOf('image') !== 0) {
                 onDone();
                 return;
             }
-            im.readMetadata(p, function(err, metadata) {
+
+            fs.stat(p, function(err, stat) {
                 if (err) {
                     console.error(err);
                     onDone();
                     return;
                 }
-                metadata = processMetadata(metadata);
-                md5(p, function(hex) {
-                    if (!md5Dict[hex]) {
-                        var o = {
-                            path: p,
-                            legend: '',
-                            md5: hex,
-                            metadata: metadata,
-                            mtime: stat.mtime.getTime()
-                        };
-                        cfg.images[f + original_length] = o;
-                        md5Dict[hex] = true;
+                im.readMetadata(p, function(err, metadata) {
+                    if (err) {
+                        console.error(err);
+                        onDone();
+                        return;
                     }
-                    onDone();
+                    metadata = processMetadata(metadata);
+                    md5(p, function(hex) {
+                        if (!md5Dict[hex]) {
+                            var o = {
+                                path: p,
+                                legend: '',
+                                md5: hex,
+                                metadata: metadata,
+                                mtime: stat.mtime.getTime()
+                            };
+                            cfg.images[f + original_length] = o;
+                            md5Dict[hex] = true;
+                        }
+                        return onDone();
+                    });
                 });
             });
-        });
-    };
-    for (i = 0; i < NB_WORKERS; i++) {
-        checkImage(i);
-    }
-    return deferred.promise;
+        };
+
+
+        checkImage(0);
+    })
 };
 /* }}} */
 /* {{{ genConfig */
@@ -729,7 +763,7 @@ var genConfig = function(inPath, cfgPath, outDirectory) {
     var json = {
         images: [],
         out: outDirectory || 'out/',
-        title: 'My pics',
+        title: 'Pictures',
         lang: 'en'
     };
 
@@ -762,7 +796,7 @@ var cleanup = function(cfg) {
     for (i in cfg.images) {
         var img = cfg.images[i];
         if (img.md5) {
-            images[img.md5 + '.jpg'] = true;
+            images[img.md5 + path.extname(img.path)] = true;
         }
     }
 
@@ -824,6 +858,49 @@ var cleanup = function(cfg) {
     });
 };
 
+moveFiles = function(files, callback) {
+    function moveFiles_real (idx, newFiles) {
+        var filename = files[idx].path;
+
+        getDateTimeFilename(filename).then(function (val) {
+            var newFilename = val + path.extname(filename);
+            newFiles.push(__dirname + "/img/" + newFilename);
+            console.log(newFilename);
+
+            fs.rename(filename, __dirname + "/img/" + newFilename, function (err) {
+                if (err) return console.err(err);
+
+                if (idx + 1 >= files.length) {
+                    return callback(newFiles);
+                } else {
+                    return moveFiles_real(idx + 1, newFiles);
+                }
+            });
+        });
+
+    }
+
+    moveFiles_real(0, []);
+}
+
+clearDir = function (directory) {
+    return new Promise(function (fulfill, reject) {
+        fs.readdir(directory, function (err, files) {
+            var i = 0;
+            if (err) { return reject(err); }
+
+            for (var a in files) {
+                // Note: it is ok to use unlinkSync here, since clearDir is only called very rarely and
+                // usually just when using "node photoalbum.js reset config_name"
+                fs.unlinkSync(path.join(directory, files[a]));
+                i++;
+            }            
+
+            return fulfill(i);
+        })
+    });
+}
+
 /* }}} */
 /* {{{ server */
 
@@ -859,7 +936,75 @@ var server = function(cfg, cfgPath) {
         });
     };
 
-    var handler = function(request, response) {
+    var post_handler = function (request, response) {
+        urlParts = url.parse(request.url, false);
+
+        switch (urlParts.pathname) {
+
+            case '/save':
+                var data = "";
+                request.on('data', function(chunk) {
+                    data += chunk;
+                });
+                request.on('end', function() {
+                    httpSimple(200, response);
+                    fs.writeFile(cfgPath, data, function(err) {
+                        if (err) {
+                            throw (err);
+                        }
+                    });
+                });
+                return;
+
+            case '/upload':
+
+                moveFiles(request.files.image, function (files) {
+                    // generate, render, etc. ...
+
+                    getJSONFromPath(args[1], function(cfg) {
+
+                        addImages(cfg, args[1], files).then(function () {
+                            setup(cfg, false);
+
+                            saveCfg(args[1], cfg).then(function (val) {
+                                console.log("GENTHUMBS")
+                                genThumbs(cfg, function () {
+                                    console.log("SETUP2")
+                                    setup(cfg, true);
+
+                                    console.log("COPYFULL")
+                                    copyFull(cfg, function() {
+                                        console.log("COPYFULL")
+                                        saveCfg(args[1], cfg);
+
+                                        console.log("DORENDER")
+                                        doRender(cfg, true, function() {
+                                            console.log("SAVECFG")
+                                            saveCfg(args[1], cfg);    
+                                            return httpSimple(200, response);
+                                        });
+                                    });
+                                });
+                            }).catch(function (err) {
+                                console.log("Could not save " + args[1] + "(" + err + ")")
+                            })
+                        }).catch(function (err) {
+                            console.log("[addImages] failure. " + err)
+                        });
+                    });
+                })
+
+                return;
+
+            default:
+                httpSimple(501, response);
+                return;
+        }
+
+        return httpSimple(501, response);
+    }
+
+    var get_handler = function(request, response) {
         var urlParts;
         if (request.method === 'GET') {
             urlParts = url.parse(request.url, false);
@@ -918,24 +1063,6 @@ var server = function(cfg, cfgPath) {
                     serveStaticFile(path.join(cfg.out, urlParts.pathname), response);
                     break;
             }
-        } else if (request.method === 'POST') {
-            urlParts = url.parse(request.url, false);
-            if (urlParts.pathname !== '/save') {
-                httpSimple(501, response);
-                return;
-            }
-            var data = "";
-            request.on('data', function(chunk) {
-                data += chunk;
-            });
-            request.on('end', function() {
-                httpSimple(200, response);
-                fs.writeFile(cfgPath, data, function(err) {
-                    if (err) {
-                        throw (err);
-                    }
-                });
-            });
         } else {
             httpSimple(501, response);
         }
@@ -970,14 +1097,10 @@ var server = function(cfg, cfgPath) {
     app.set('port', DEFAULT_HTTP_PORT);
     app.use(favicon(__dirname + "/favicon.ico"));
     app.use(auth.connect(http_authentification));
-    app.use(bodyParser.json({
-        keepExtensions: true,
-        uploadDir: __dirname + "/img",
-        limit: '20mb'
-    }));
     app.use(methodOverride());
 
-    app.get('*', handler);
+    app.get('*', get_handler);
+    app.post('*', multipartMiddleware, post_handler);
 
     app.listen(app.get('port'), function () {
         console.log('Server running at http://localhost:' + app.get('port') + '/' +
@@ -1004,7 +1127,10 @@ var usage = function() {
         "cleanup config_file\n" +
         "    remove unused files in the output directory. Use with caution.\n" +
         "render config_file\n" +
-        "    render the photoalbum\n");
+        "    render the photoalbum\n" +
+        "reset config_file\n" + 
+        "    reset a given config_file and delete all images\n"
+        );
     process.exit(1);
 };
 
@@ -1064,6 +1190,43 @@ switch (args[0]) {
             });
         });
         break;
+
+    case "reset":
+        if (fs.existsSync(args[1])) {
+
+            getJSONFromPath(args[1], function (cfg) {
+
+                if (cfg == void 0 || cfg.out == void 0) return; 
+
+                var newContent = { "images": [], "out": cfg.out, "title": "Pictures", "lang": "en" };
+                
+                fs.writeFile(args[1], JSON.stringify(newContent), function() {
+                    console.log(args[1] + " resetted!");
+                })
+
+                fs.writeFile(path.join(cfg.out, "images.json"), "var images = [];" , function() {
+                    console.log(path.join(cfg.out, "images.json") + " resetted!");
+                })
+
+                clearDir(path.join(cfg.out, "/full")).then(function (numa) {
+                    console.log("cleared " + numa + " files in " + path.join(cfg.out, "/full"))
+                    clearDir(path.join(cfg.out, "/large")).then(function (numb) {
+                        console.log("cleared " + numb + " files in " + path.join(cfg.out, "/large"))
+                        clearDir(path.join(cfg.out, "/thumb")).then(function (numc) {
+                            console.log("cleared " + numc + " files in " + path.join(cfg.out, "/thumb"))                                 
+                        })                    
+                    })
+                })
+
+            });
+
+
+        } else {
+            console.log(args[1] + " does not exist.");
+        }
+        
+        break;
+
 
     default:
         usage();
