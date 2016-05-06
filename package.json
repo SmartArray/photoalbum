@@ -3,6 +3,7 @@
   "version": "0.1.1",
   "license": "ISC",
   "dependencies": {
+    "archiver": "^1.0.0",
     "body-parser": "^1.15.0",
     "connect-multiparty": "^2.0.0",
     "express": "^4.13.4",

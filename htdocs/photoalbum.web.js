@@ -51,9 +51,11 @@ var backToThumbs = function (md5) {
     } else {
         $('#thumbs li img:in-viewport').each(function() {
             var $t = $(this);
-            $t.prop('src', 'thumb/' + $t.prop('id') + '.jpg');
+            $t.prop('src', 'thumb/' + $t.prop('id') + $t.attr('ext'));
         });
     }
+
+    $("#topbar").removeClass("hidden");
 };
 
 var _ = function (str) {
@@ -116,6 +118,7 @@ var setupDiaporama = function (order) {
     }).tipsy({gravity: 'e'}).click(function () {
         $(this).tipsy('hide');
         backToThumbs(img.md5);
+        onScroll();
     }).appendTo($toolbar);
 
     var $playpause;
@@ -144,7 +147,6 @@ var setupDiaporama = function (order) {
         });
     };
 
-    
     $playpause = $('<img />', {
         width: 32,
         height: 32,
@@ -198,6 +200,7 @@ var setupDiaporama = function (order) {
     $bottom.append($toolbar, $legend);
 
     $diaporama.append($imgContainer, $prev, $next, $bottom);
+    $("#topbar").addClass("hidden");
 
     checkOrder = function () {
         if (order == 1) {
@@ -356,6 +359,7 @@ var updateThumbs = function (newJson) {
     var m = images.length;
     if ($children.length == m)
         return;
+
     for (i = 0; i < m; i++) {
         (function(){
             var img = images[i];
@@ -384,6 +388,13 @@ var makeLogout = function () {
 
         $.get(window.location.protocol + "//log:out@" + window.location.host, function () { console.log("OK") });
     })
+}
+
+var makeDownload = function () {
+    $("#download").click(function () {
+        window.open("/download", '_blank');
+    });
+
 }
 
 var upload = function (files) {
@@ -442,6 +453,16 @@ var makeUpload = function () {
     });
 }
 
+var onScroll = function (ev) {
+    if (!isDisplayingThumbnails) {
+        return;
+    }
+    $('#thumbs li img:in-viewport').each(function() {
+        var $t = $(this);
+        $t.prop('src', 'thumb/' + $t.prop('id') + $t.attr('ext'));
+    });
+};
+
 $(document).ready(function() {
     title = $('title').text();
 
@@ -450,6 +471,7 @@ $(document).ready(function() {
     makeTopBar();
     makeLogout();
     makeUpload();
+    makeDownload();
 
     if (images == undefined) return;
     totalImages = images.length;
@@ -468,6 +490,7 @@ $(document).ready(function() {
 
     $(window).on('popstate', function(ev) {
         var state = (ev.originalEvent) ? ev.originalEvent.state : ev.state;
+        console.log(state)
         if (state) {
             if (state.order > 0) {
                 setupDiaporama(state.order);
@@ -492,15 +515,7 @@ $(document).ready(function() {
         }
     });
 
-    var onScroll = function (ev) {
-        if (!isDisplayingThumbnails) {
-            return;
-        }
-        $('#thumbs li img:in-viewport').each(function() {
-            var $t = $(this);
-            $t.prop('src', 'thumb/' + $t.prop('id') + $t.attr('ext'));
-        });
-    };
+
     $(window).scroll(onScroll);
     onScroll();
 

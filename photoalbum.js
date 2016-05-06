@@ -16,7 +16,8 @@ var express = require('express'),
     multipart = require('connect-multiparty'),
     favicon = require('express-favicon'),
     methodOverride = require('method-override'),
-    http = require('http');
+    http = require('http'),
+    archiver = require('archiver');
 
 var app = express();
 var multipartMiddleware = multipart();
@@ -223,7 +224,6 @@ var setup = function(cfg, isEditor) {
     /* mkdir */
     var i;
     for (i in directories) {
-        console.log(" (!): " +  directories[i]);
         (function() {
             var dir = directories[i];
             var p = path.join(cfg.out, dir);
@@ -354,7 +354,6 @@ var genThumbs = function(cfg, onEnd) {
 
     var dealImage = function(cfg, pos) {
         var img = cfg.images[pos];
-        if (!img) { console.log("Got no image: " + pos ); return; }
 
         var finish = function() {
             done++;
@@ -362,11 +361,11 @@ var genThumbs = function(cfg, onEnd) {
             if (done < cfg.images.length) {
                 return dealImage(cfg, done);
             } else if (done == cfg.images.length) {
-                console.log("ON end")
                 return onEnd(images);
             }
         };
 
+        if (!img) { console.error("Got no image: " + pos ); return finish(); }
         genOneThumbnail(cfg, pos, img, images, finish);
     };
 
@@ -406,18 +405,15 @@ var copyFull = function(cfg, onDone) {
         }
         var finish = function(pos) {
             done++;
-            console.log('\rcopying full images: ' + done + '/' + cfg.images.length);
             if (pos + NB_WORKERS < cfg.images.length) {
                 worker(pos + NB_WORKERS);
             } else if (done == cfg.images.length) {
-                console.log('\n');
                 onDone();
             }
         };
         if (img.type === 'page') {
             finish(pos);
         } else {
-            console.log("> " + img.md5 + path.extname(img.path))
             copyIfNotExits(img.path,
                 path.join(cfg.out, 'full', img.md5 + path.extname(img.path)),
                 function() {
@@ -539,11 +535,9 @@ var doRender = function(cfg, doGenJSON, onDone) {
 
         var finish = function() {
             done++;
-            console.log('\rworking on images: ' + done + '/' + cfg.images.length);
             if (pos + NB_WORKERS < cfg.images.length) {
                 dealImage(cfg, pos + NB_WORKERS, onDone);
             } else if (done == cfg.images.length) {
-                console.log('\n');
                 onDone();
             }
         };
@@ -690,7 +684,6 @@ var addImages = function(cfg, cfgPath, images, inPath) {
 
             var onDone = function () {
                 ++done;
-                console.log('\ranalysing files: ' + done + '/' + images.length);
 
                 if (done == images.length) {
                     console.log('photo album now has ' + cfg.images.length + ' images\n');
@@ -706,10 +699,8 @@ var addImages = function(cfg, cfgPath, images, inPath) {
                             }
                         });
                     }
-                    console.log("Fulfill!")
                     return fulfill(done);
                 } else {
-                    console.log("calling " +  done)
                     return checkImage(done);
                 }
             };
@@ -771,12 +762,10 @@ var genConfig = function(inPath, cfgPath, outDirectory) {
         if (err) {
             throw err;
         }
-        console.log('Checking ' + dirs.length + ' files in ' + inPath + '\n');
 
         addImages(json, cfgPath, dirs, inPath)
             .then(function() {
                 fs.stat(json.out, function(err, stats) {
-                    console.log("Output dir is set to " + json.out + "\n");
                     if (err) {
                         fs.mkdir(json.out);
                     }
@@ -865,10 +854,9 @@ moveFiles = function(files, callback) {
         getDateTimeFilename(filename).then(function (val) {
             var newFilename = val + path.extname(filename);
             newFiles.push(__dirname + "/img/" + newFilename);
-            console.log(newFilename);
 
             fs.rename(filename, __dirname + "/img/" + newFilename, function (err) {
-                if (err) return console.err(err);
+                if (err) return console.error(err);
 
                 if (idx + 1 >= files.length) {
                     return callback(newFiles);
@@ -967,29 +955,23 @@ var server = function(cfg, cfgPath) {
                             setup(cfg, false);
 
                             saveCfg(args[1], cfg).then(function (val) {
-                                console.log("GENTHUMBS")
                                 genThumbs(cfg, function () {
-                                    console.log("SETUP2")
                                     setup(cfg, true);
 
-                                    console.log("COPYFULL")
                                     copyFull(cfg, function() {
-                                        console.log("COPYFULL")
                                         saveCfg(args[1], cfg);
 
-                                        console.log("DORENDER")
                                         doRender(cfg, true, function() {
-                                            console.log("SAVECFG")
                                             saveCfg(args[1], cfg);    
                                             return httpSimple(200, response);
                                         });
                                     });
                                 });
                             }).catch(function (err) {
-                                console.log("Could not save " + args[1] + "(" + err + ")")
+                                console.error("Could not save " + args[1] + "(" + err + ")")
                             })
                         }).catch(function (err) {
-                            console.log("[addImages] failure. " + err)
+                            console.error("[addImages] failure. " + err)
                         });
                     });
                 })
@@ -1058,6 +1040,38 @@ var server = function(cfg, cfgPath) {
                     response.end('<html><body>Successfully logged out!</body></html>');
                     // http authorisation: basic [base64 ...]
                     break;
+
+                case '/download':
+                    if (!fs.existsSync("download/")) {
+                        fs.mkdir("download");
+                    }
+
+                    getJSONFromPath(args[1], function (cfg) {
+                        var zip = archiver('zip') // or archiver('zip', {});
+                        var out_filename = __dirname + '/download/' + dateToStr(new Date()) + '.zip';
+                        var output = fs.createWriteStream(out_filename);
+                        var xpath = path.join(cfg.out, "/full/");
+                        zip.pipe(output);                        
+
+                        fs.readdir(xpath, function (err, files) {
+                            var filepath;
+
+                            for (var a in files) {
+                                filepath = path.join(__dirname, xpath, files[a]);
+                                zip.append(fs.createReadStream(filepath), { name: files[a] });
+                            }
+
+                            console.log("Creating " + out_filename);
+                            zip.finalize();
+
+                            setTimeout(function () {
+                                return response.download(out_filename);
+                            }, 4000);
+                        })
+
+                    });
+
+                    return;
 
                 default:
                     serveStaticFile(path.join(cfg.out, urlParts.pathname), response);
@@ -1164,6 +1178,10 @@ switch (args[0]) {
         break;
 
     case "server":
+        if (!fs.existsSync("img/")) {
+            fs.mkdir("img");
+        }
+
         getJSONFromPath(args[1], function(cfg) {
             //setup(cfg, false);
             server(cfg, args[1]);
@@ -1222,7 +1240,7 @@ switch (args[0]) {
 
 
         } else {
-            console.log(args[1] + " does not exist.");
+            console.error(args[1] + " does not exist.");
         }
         
         break;
