@@ -187,6 +187,7 @@ var setup = function(cfg, isEditor) {
     var workHtmlFile = function(filename) {
         var source = path.join('htdocs', filename);
         genHtmlFile('', cfg, source, function(data) {
+            if (!fs.existsSync(cfg.out)) { fs.mkdir(cfg.out) }
             var dest = path.join(cfg.out, filename);
             fs.writeFile(dest, data, function(err) {
                 if (err) {
