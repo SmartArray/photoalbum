@@ -85,6 +85,11 @@ var directories = [
     'full'
 ];
 
+process.on('uncaughtException', function (err) {
+	console.log('Caught exception: ' + err);
+});
+
+
 /* }}} */
 /* {{{ Utils */
 
@@ -687,7 +692,7 @@ var addImages = function(cfg, cfgPath, images, inPath) {
                 ++done;
 
                 if (done == images.length) {
-                    console.log('photo album now has ' + cfg.images.length + ' images\n');
+                    //console.log('photo album now has ' + cfg.images.length + ' images\n');
 
                     if (inPath) {
                         cfg.images.sort(function(imgA, imgB) {
@@ -946,6 +951,7 @@ var server = function(cfg, cfgPath) {
                 return;
 
             case '/upload':
+		console.log("Incoming upload from user " + request.user + " (" + request.files.image.length + " file(s))");		
 
                 moveFiles(request.files.image, function (files) {
                     // generate, render, etc. ...
@@ -1043,6 +1049,8 @@ var server = function(cfg, cfgPath) {
                     break;
 
                 case '/download':
+	
+                    console.log("Download request from user " + request.user);		
                     if (!fs.existsSync("download/")) {
                         fs.mkdir("download");
                     }
