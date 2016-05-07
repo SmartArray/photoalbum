@@ -1117,11 +1117,16 @@ var server = function(cfg, cfgPath) {
     app.get('*', get_handler);
     app.post('*', multipartMiddleware, post_handler);
 
-    app.listen(app.get('port'), function () {
+    var server = app.listen(app.get('port'), function () {
         console.log('Server running at http://localhost:' + app.get('port') + '/' +
             '\neditor available at http://localhost:' + app.get('port') +
             '/editor.html');
     });
+
+    server.timeout = 1000 * 60 * 20; // 20 mins
+
+
+
 };
 
 /* }}} */
